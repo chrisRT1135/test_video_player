@@ -12,6 +12,8 @@ import 'download_manager.dart';
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
+  // Unlock all orientations so auto-rotate works
+  SystemChrome.setPreferredOrientations([]);
   runApp(const MyApp());
 }
 
@@ -49,6 +51,9 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
   bool _isLocal = false;
   double _downloadProgress = 0.0;
   String _downloadStatus = '';
+
+  /// Prevents double-pushing the fullscreen route
+  bool _fullscreenActive = false;
 
   @override
   void initState() {
@@ -161,28 +166,54 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
     }
   }
 
-  void _enterFullscreen() {
+  /// [manual] = true  → user pressed the button: force landscape, restore portrait on exit
+  /// [manual] = false → device auto-rotated: don't lock orientation, unlock all on exit
+  void _enterFullscreen({bool manual = false}) {
+    if (_fullscreenActive) return;
+    _fullscreenActive = true;
+
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-    SystemChrome.setPreferredOrientations([
-      DeviceOrientation.landscapeLeft,
-      DeviceOrientation.landscapeRight,
-    ]);
+    if (manual) {
+      SystemChrome.setPreferredOrientations([
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
+      ]);
+    }
+
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => _FullscreenPage(
           player: _player,
           controller: _controller,
+          restorePortrait: manual,
         ),
       ),
     ).then((_) {
+      _fullscreenActive = false;
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-      SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+      if (manual) {
+        SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+      } else {
+        // Unlock all orientations so normal auto-rotate continues to work
+        SystemChrome.setPreferredOrientations([]);
+      }
     });
   }
 
   @override
   Widget build(BuildContext context) {
+    // Auto-enter fullscreen when device rotates to landscape
+    final isLandscape =
+        MediaQuery.of(context).orientation == Orientation.landscape;
+    if (isLandscape && !_fullscreenActive) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !_fullscreenActive) {
+          _enterFullscreen(manual: false);
+        }
+      });
+    }
+
     return PopScope(
       canPop: false,
       child: Scaffold(
@@ -206,7 +237,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
                 player: _player,
                 controller: _controller,
                 isFullscreen: false,
-                onToggleFullscreen: _enterFullscreen,
+                onToggleFullscreen: () => _enterFullscreen(manual: true),
               ),
             ),
 
@@ -240,24 +271,72 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
 // Fullscreen page
 // ---------------------------------------------------------------------------
 
-class _FullscreenPage extends StatelessWidget {
+class _FullscreenPage extends StatefulWidget {
   const _FullscreenPage({
     required this.player,
     required this.controller,
+    required this.restorePortrait,
   });
 
   final Player player;
   final VideoController controller;
+
+  /// true  → entered via button (orientation was forced); exit button forces portrait
+  /// false → entered via auto-rotate; rotate back to portrait to exit
+  final bool restorePortrait;
+
+  @override
+  State<_FullscreenPage> createState() => _FullscreenPageState();
+}
+
+class _FullscreenPageState extends State<_FullscreenPage>
+    with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  /// When the device physically rotates back to portrait (auto-rotate scenario),
+  /// pop the fullscreen page automatically.
+  @override
+  void didChangeMetrics() {
+    if (!widget.restorePortrait && mounted) {
+      final view =
+          WidgetsBinding.instance.platformDispatcher.views.firstOrNull;
+      if (view != null) {
+        final size = view.physicalSize;
+        final isPortrait = size.height > size.width;
+        if (isPortrait) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && Navigator.canPop(context)) {
+              Navigator.pop(context);
+            }
+          });
+        }
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
       body: _VideoStack(
-        player: player,
-        controller: controller,
+        player: widget.player,
+        controller: widget.controller,
         isFullscreen: true,
-        onToggleFullscreen: () => Navigator.pop(context),
+        onToggleFullscreen: () {
+          // Always restore portrait when user manually exits via button
+          SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+          Navigator.pop(context);
+        },
       ),
     );
   }

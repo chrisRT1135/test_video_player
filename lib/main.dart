@@ -52,6 +52,10 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
   bool _isPlaying = false;
   bool _showControls = true;
 
+  // For double-tap seek overlay
+  bool _showSeekLeft = false;
+  bool _showSeekRight = false;
+
   @override
   void initState() {
     super.initState();
@@ -179,6 +183,25 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
     _player.playOrPause();
   }
 
+  Future<void> _seekForward() async {
+    final pos = _player.state.position;
+    final dur = _player.state.duration;
+    final target = pos + const Duration(seconds: 15);
+    await _player.seek(target > dur ? dur : target);
+    setState(() => _showSeekRight = true);
+    await Future.delayed(const Duration(milliseconds: 700));
+    if (mounted) setState(() => _showSeekRight = false);
+  }
+
+  Future<void> _seekBackward() async {
+    final pos = _player.state.position;
+    final target = pos - const Duration(seconds: 15);
+    await _player.seek(target < Duration.zero ? Duration.zero : target);
+    setState(() => _showSeekLeft = true);
+    await Future.delayed(const Duration(milliseconds: 700));
+    if (mounted) setState(() => _showSeekLeft = false);
+  }
+
   @override
   Widget build(BuildContext context) {
     return PopScope(
@@ -209,17 +232,65 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
                     controls: NoVideoControls,
                   ),
 
-                  // Tap to toggle controls — only covers the area ABOVE the seek bar
+                  // Left half: single tap toggles controls, double tap seeks -15s
                   Positioned(
                     left: 0,
-                    right: 0,
+                    right: null,
                     top: 0,
-                    bottom: 80, // leave space for the seek bar region
-                    child: GestureDetector(
-                      onTap: _toggleControls,
-                      behavior: HitTestBehavior.translucent,
+                    bottom: 80,
+                    child: SizedBox(
+                      width: MediaQuery.of(context).size.width / 2,
+                      child: GestureDetector(
+                        onTap: _toggleControls,
+                        onDoubleTap: _seekBackward,
+                        behavior: HitTestBehavior.translucent,
+                      ),
                     ),
                   ),
+
+                  // Right half: single tap toggles controls, double tap seeks +15s
+                  Positioned(
+                    left: null,
+                    right: 0,
+                    top: 0,
+                    bottom: 80,
+                    child: SizedBox(
+                      width: MediaQuery.of(context).size.width / 2,
+                      child: GestureDetector(
+                        onTap: _toggleControls,
+                        onDoubleTap: _seekForward,
+                        behavior: HitTestBehavior.translucent,
+                      ),
+                    ),
+                  ),
+
+                  // Seek backward overlay
+                  if (_showSeekLeft)
+                    Positioned(
+                      left: 16,
+                      top: 0,
+                      bottom: 80,
+                      child: Center(
+                        child: _SeekOverlay(
+                          icon: Icons.fast_rewind,
+                          label: '-15秒',
+                        ),
+                      ),
+                    ),
+
+                  // Seek forward overlay
+                  if (_showSeekRight)
+                    Positioned(
+                      right: 16,
+                      top: 0,
+                      bottom: 80,
+                      child: Center(
+                        child: _SeekOverlay(
+                          icon: Icons.fast_forward,
+                          label: '+15秒',
+                        ),
+                      ),
+                    ),
 
                   // Semi-transparent gradient at the bottom (always behind seek bar)
                   if (_showControls)
@@ -305,6 +376,32 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
             const Spacer(),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _SeekOverlay extends StatelessWidget {
+  const _SeekOverlay({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.black54,
+        borderRadius: BorderRadius.circular(40),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: Colors.white, size: 32),
+          const SizedBox(height: 4),
+          Text(label, style: const TextStyle(color: Colors.white, fontSize: 13)),
+        ],
       ),
     );
   }

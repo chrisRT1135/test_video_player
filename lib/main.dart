@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'dart:developer' as dev;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
@@ -48,14 +50,6 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
   double _downloadProgress = 0.0;
   String _downloadStatus = '';
 
-  // For play/pause overlay
-  bool _isPlaying = false;
-  bool _showControls = true;
-
-  // For double-tap seek overlay
-  bool _showSeekLeft = false;
-  bool _showSeekRight = false;
-
   @override
   void initState() {
     super.initState();
@@ -63,21 +57,15 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
     _controller = VideoController(_player);
 
     _player.stream.playing.listen((playing) {
-      if (mounted) {
-        dev.log('[Main] playing stream: $playing');
-        setState(() => _isPlaying = playing);
-      }
+      if (mounted) dev.log('[Main] playing stream: $playing');
     });
 
-    // Log position changes to see if seek takes effect
     _player.stream.position.listen((p) {
-      // Only log occasionally to avoid spam — every 2 seconds
       if (p.inMilliseconds % 2000 < 100) {
         dev.log('[Main] position: ${p.inMilliseconds}ms');
       }
     });
 
-    // Log errors from player
     _player.stream.error.listen((e) {
       dev.log('[Main] PLAYER ERROR: $e');
     });
@@ -173,33 +161,24 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
     }
   }
 
-  void _toggleControls() {
-    dev.log('[Main] toggleControls — was $_showControls');
-    setState(() => _showControls = !_showControls);
-  }
-
-  void _togglePlayPause() {
-    dev.log('[Main] togglePlayPause — was playing=$_isPlaying');
-    _player.playOrPause();
-  }
-
-  Future<void> _seekForward() async {
-    final pos = _player.state.position;
-    final dur = _player.state.duration;
-    final target = pos + const Duration(seconds: 15);
-    await _player.seek(target > dur ? dur : target);
-    setState(() => _showSeekRight = true);
-    await Future.delayed(const Duration(milliseconds: 700));
-    if (mounted) setState(() => _showSeekRight = false);
-  }
-
-  Future<void> _seekBackward() async {
-    final pos = _player.state.position;
-    final target = pos - const Duration(seconds: 15);
-    await _player.seek(target < Duration.zero ? Duration.zero : target);
-    setState(() => _showSeekLeft = true);
-    await Future.delayed(const Duration(milliseconds: 700));
-    if (mounted) setState(() => _showSeekLeft = false);
+  void _enterFullscreen() {
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => _FullscreenPage(
+          player: _player,
+          controller: _controller,
+        ),
+      ),
+    ).then((_) {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+      SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+    });
   }
 
   @override
@@ -221,140 +200,16 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
         ),
         body: Column(
           children: [
-            // Video with custom controls
             AspectRatio(
               aspectRatio: 16 / 9,
-              child: Stack(
-                children: [
-                  // Raw video — no built-in controls
-                  Video(
-                    controller: _controller,
-                    controls: NoVideoControls,
-                  ),
-
-                  // Left half: single tap toggles controls, double tap seeks -15s
-                  Positioned(
-                    left: 0,
-                    right: null,
-                    top: 0,
-                    bottom: 80,
-                    child: SizedBox(
-                      width: MediaQuery.of(context).size.width / 2,
-                      child: GestureDetector(
-                        onTap: _toggleControls,
-                        onDoubleTap: _seekBackward,
-                        behavior: HitTestBehavior.translucent,
-                      ),
-                    ),
-                  ),
-
-                  // Right half: single tap toggles controls, double tap seeks +15s
-                  Positioned(
-                    left: null,
-                    right: 0,
-                    top: 0,
-                    bottom: 80,
-                    child: SizedBox(
-                      width: MediaQuery.of(context).size.width / 2,
-                      child: GestureDetector(
-                        onTap: _toggleControls,
-                        onDoubleTap: _seekForward,
-                        behavior: HitTestBehavior.translucent,
-                      ),
-                    ),
-                  ),
-
-                  // Seek backward overlay
-                  if (_showSeekLeft)
-                    Positioned(
-                      left: 16,
-                      top: 0,
-                      bottom: 80,
-                      child: Center(
-                        child: _SeekOverlay(
-                          icon: Icons.fast_rewind,
-                          label: '-15秒',
-                        ),
-                      ),
-                    ),
-
-                  // Seek forward overlay
-                  if (_showSeekRight)
-                    Positioned(
-                      right: 16,
-                      top: 0,
-                      bottom: 80,
-                      child: Center(
-                        child: _SeekOverlay(
-                          icon: Icons.fast_forward,
-                          label: '+15秒',
-                        ),
-                      ),
-                    ),
-
-                  // Semi-transparent gradient at the bottom (always behind seek bar)
-                  if (_showControls)
-                    Positioned(
-                      left: 0,
-                      right: 0,
-                      bottom: 0,
-                      height: 100,
-                      child: IgnorePointer(
-                        child: Container(
-                          decoration: const BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: Alignment.topCenter,
-                              end: Alignment.bottomCenter,
-                              colors: [Colors.transparent, Colors.black54],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-
-                  // Play/pause button centered
-                  if (_showControls)
-                    Center(
-                      child: GestureDetector(
-                        onTap: _togglePlayPause,
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: Colors.black45,
-                            shape: BoxShape.circle,
-                          ),
-                          padding: const EdgeInsets.all(12),
-                          child: Icon(
-                            _isPlaying ? Icons.pause : Icons.play_arrow,
-                            color: Colors.white,
-                            size: 40,
-                          ),
-                        ),
-                      ),
-                    ),
-
-                  // Seek bar — ALWAYS mounted to preserve duration state,
-                  // use Opacity + IgnorePointer to hide/disable instead of
-                  // removing from tree (which causes re-initState & loses duration)
-                  Positioned(
-                    left: 12,
-                    right: 12,
-                    bottom: 4,
-                    child: IgnorePointer(
-                      ignoring: !_showControls,
-                      child: AnimatedOpacity(
-                        opacity: _showControls ? 1.0 : 0.0,
-                        duration: const Duration(milliseconds: 200),
-                        child: CustomSeekBar(
-                          player: _player,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
+              child: _VideoStack(
+                player: _player,
+                controller: _controller,
+                isFullscreen: false,
+                onToggleFullscreen: _enterFullscreen,
               ),
             ),
 
-            // Download progress
             if (_isDownloading || _downloadStatus.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.symmetric(
@@ -381,6 +236,249 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Fullscreen page
+// ---------------------------------------------------------------------------
+
+class _FullscreenPage extends StatelessWidget {
+  const _FullscreenPage({
+    required this.player,
+    required this.controller,
+  });
+
+  final Player player;
+  final VideoController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: _VideoStack(
+        player: player,
+        controller: controller,
+        isFullscreen: true,
+        onToggleFullscreen: () => Navigator.pop(context),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Shared video stack (controls, gestures, overlays)
+// ---------------------------------------------------------------------------
+
+class _VideoStack extends StatefulWidget {
+  const _VideoStack({
+    required this.player,
+    required this.controller,
+    required this.isFullscreen,
+    required this.onToggleFullscreen,
+  });
+
+  final Player player;
+  final VideoController controller;
+  final bool isFullscreen;
+  final VoidCallback onToggleFullscreen;
+
+  @override
+  State<_VideoStack> createState() => _VideoStackState();
+}
+
+class _VideoStackState extends State<_VideoStack> {
+  bool _isPlaying = false;
+  bool _showControls = true;
+  bool _showSeekLeft = false;
+  bool _showSeekRight = false;
+
+  late final StreamSubscription<bool> _playingSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _isPlaying = widget.player.state.playing;
+    _playingSub = widget.player.stream.playing.listen((playing) {
+      if (mounted) setState(() => _isPlaying = playing);
+    });
+  }
+
+  @override
+  void dispose() {
+    _playingSub.cancel();
+    super.dispose();
+  }
+
+  void _toggleControls() => setState(() => _showControls = !_showControls);
+
+  void _togglePlayPause() => widget.player.playOrPause();
+
+  Future<void> _seekForward() async {
+    final pos = widget.player.state.position;
+    final dur = widget.player.state.duration;
+    final target = pos + const Duration(seconds: 15);
+    await widget.player.seek(target > dur ? dur : target);
+    setState(() => _showSeekRight = true);
+    await Future.delayed(const Duration(milliseconds: 700));
+    if (mounted) setState(() => _showSeekRight = false);
+  }
+
+  Future<void> _seekBackward() async {
+    final pos = widget.player.state.position;
+    final target = pos - const Duration(seconds: 15);
+    await widget.player.seek(target < Duration.zero ? Duration.zero : target);
+    setState(() => _showSeekLeft = true);
+    await Future.delayed(const Duration(milliseconds: 700));
+    if (mounted) setState(() => _showSeekLeft = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        // Raw video — no built-in controls
+        Video(
+          controller: widget.controller,
+          controls: NoVideoControls,
+        ),
+
+        // Left half: tap toggles controls, double tap seeks -15s
+        Positioned(
+          left: 0,
+          top: 0,
+          bottom: 80,
+          child: SizedBox(
+            width: MediaQuery.of(context).size.width / 2,
+            child: GestureDetector(
+              onTap: _toggleControls,
+              onDoubleTap: _seekBackward,
+              behavior: HitTestBehavior.translucent,
+            ),
+          ),
+        ),
+
+        // Right half: tap toggles controls, double tap seeks +15s
+        Positioned(
+          right: 0,
+          top: 0,
+          bottom: 80,
+          child: SizedBox(
+            width: MediaQuery.of(context).size.width / 2,
+            child: GestureDetector(
+              onTap: _toggleControls,
+              onDoubleTap: _seekForward,
+              behavior: HitTestBehavior.translucent,
+            ),
+          ),
+        ),
+
+        // Seek backward overlay
+        if (_showSeekLeft)
+          Positioned(
+            left: 16,
+            top: 0,
+            bottom: 80,
+            child: Center(
+              child: _SeekOverlay(icon: Icons.fast_rewind, label: '-15秒'),
+            ),
+          ),
+
+        // Seek forward overlay
+        if (_showSeekRight)
+          Positioned(
+            right: 16,
+            top: 0,
+            bottom: 80,
+            child: Center(
+              child: _SeekOverlay(icon: Icons.fast_forward, label: '+15秒'),
+            ),
+          ),
+
+        // Bottom gradient
+        if (_showControls)
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: 100,
+            child: IgnorePointer(
+              child: Container(
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [Colors.transparent, Colors.black54],
+                  ),
+                ),
+              ),
+            ),
+          ),
+
+        // Play/pause button centered
+        if (_showControls)
+          Center(
+            child: GestureDetector(
+              onTap: _togglePlayPause,
+              child: Container(
+                decoration: const BoxDecoration(
+                  color: Colors.black45,
+                  shape: BoxShape.circle,
+                ),
+                padding: const EdgeInsets.all(12),
+                child: Icon(
+                  _isPlaying ? Icons.pause : Icons.play_arrow,
+                  color: Colors.white,
+                  size: 40,
+                ),
+              ),
+            ),
+          ),
+
+        // Fullscreen toggle button (top-right)
+        if (_showControls)
+          Positioned(
+            top: 8,
+            right: 8,
+            child: GestureDetector(
+              onTap: widget.onToggleFullscreen,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.black45,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                padding: const EdgeInsets.all(4),
+                child: Icon(
+                  widget.isFullscreen
+                      ? Icons.fullscreen_exit
+                      : Icons.fullscreen,
+                  color: Colors.white,
+                  size: 28,
+                ),
+              ),
+            ),
+          ),
+
+        // Seek bar — ALWAYS mounted to preserve duration state
+        Positioned(
+          left: 12,
+          right: 12,
+          bottom: 4,
+          child: IgnorePointer(
+            ignoring: !_showControls,
+            child: AnimatedOpacity(
+              opacity: _showControls ? 1.0 : 0.0,
+              duration: const Duration(milliseconds: 200),
+              child: CustomSeekBar(player: widget.player),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Seek overlay widget
+// ---------------------------------------------------------------------------
+
 class _SeekOverlay extends StatelessWidget {
   const _SeekOverlay({required this.icon, required this.label});
 
@@ -400,7 +498,8 @@ class _SeekOverlay extends StatelessWidget {
         children: [
           Icon(icon, color: Colors.white, size: 32),
           const SizedBox(height: 4),
-          Text(label, style: const TextStyle(color: Colors.white, fontSize: 13)),
+          Text(label,
+              style: const TextStyle(color: Colors.white, fontSize: 13)),
         ],
       ),
     );
